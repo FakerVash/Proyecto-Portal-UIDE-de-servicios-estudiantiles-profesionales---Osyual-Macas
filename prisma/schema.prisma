@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = "mysql://root:root@localhost:3306/servicios_universitarios"
+}
+
+// Enums
+enum Rol {
+  ESTUDIANTE
+  CLIENTE
+  ADMIN
+}
+
+enum EstadoPedido {
+  PENDIENTE
+  EN_PROCESO
+  COMPLETADO
+  CANCELADO
+}
+
+// Modelos
+
+model Facultad {
+  id        Int       @id @default(autoincrement())
+  nombre    String    @unique
+  carreras  Carrera[]
+}
+
+model Carrera {
+  id          Int       @id @default(autoincrement())
+  nombre      String    @unique
+  facultadId  Int
+  facultad    Facultad  @relation(fields: [facultadId], references: [id])
+  usuarios    Usuario[]
+}
+
+model Categoria {
+  id          Int        @id @default(autoincrement())
+  nombre      String     @unique
+  descripcion String?    @db.Text
+  servicios   Servicio[]
+}
+
+model Usuario {
+  id              Int       @id @default(autoincrement())
+  email           String    @unique
+  password        String
+  nombre          String
+  apellido        String
+  telefono        String?
+  rol             Rol       @default(CLIENTE)
+  fotoPerfil      String?   @map("foto_perfil")
+  activo          Boolean   @default(true)
+  fechaRegistro   DateTime  @default(now()) @map("fecha_registro")
+
+  // Relación con Carrera (Solo para estudiantes)
+  carreraId       Int?      @map("id_carrera")
+  carrera         Carrera?  @relation(fields: [carreraId], references: [id])
+
+  // Relaciones
+  servicios       Servicio[] // Servicios que OFRECE (si es estudiante)
+  pedidos         Pedido[]   // Pedidos que REALIZA (como cliente)
+  
+  @@map("usuarios")
+}
+
+model Servicio {
+  id              Int       @id @default(autoincrement())
+  titulo          String
+  descripcion     String    @db.Text
+  precio          Decimal   @db.Decimal(10, 2)
+  tiempoEntrega   String?   @map("tiempo_entrega")
+  imagenPortada   String?   @map("imagen_portada")
+  
+  // Contacto directo
+  contactoWhatsapp String?  @map("contacto_whatsapp")
+  contactoEmail    String?  @map("contacto_email")
+  contactoTelefono String?  @map("contacto_telefono")
+
+  fechaPublicacion DateTime @default(now()) @map("fecha_publicacion")
+  activo           Boolean  @default(true)
+
+  // Relaciones
+  usuarioId       Int       @map("id_usuario")
+  usuario         Usuario   @relation(fields: [usuarioId], references: [id])
+  
+  categoriaId     Int       @map("id_categoria")
+  categoria       Categoria @relation(fields: [categoriaId], references: [id])
+
+  pedidos         Pedido[]
+
+  @@map("servicios")
+}
+
+model Pedido {
+  id          Int           @id @default(autoincrement())
+  estado      EstadoPedido  @default(PENDIENTE)
+  fechaPedido DateTime      @default(now()) @map("fecha_pedido")
+  fechaEntrega DateTime?    @map("fecha_entrega")
+  montoTotal  Decimal       @map("monto_total") @db.Decimal(10, 2)
+  notas       String?       @db.Text
+
+  // Relaciones
+  servicioId  Int       @map("id_servicio")
+  servicio    Servicio  @relation(fields: [servicioId], references: [id])
+
+  clienteId   Int       @map("id_cliente")
+  cliente     Usuario   @relation(fields: [clienteId], references: [id])
+
+  resena      Resena?
+
+  @@map("pedidos")
+}
+
+model Resena {
+  id            Int      @id @default(autoincrement())
+  calificacion  Int
+  comentario    String?  @db.Text
+  fechaResena   DateTime @default(now()) @map("fecha_resena")
+
+  // Relaciones
+  pedidoId      Int      @unique @map("id_pedido")
+  pedido        Pedido   @relation(fields: [pedidoId], references: [id])
+
+  @@map("resenas")
+}

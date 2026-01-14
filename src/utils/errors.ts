@@ -1,47 +1,43 @@
 export class AppError extends Error {
-    constructor(
-        public message: string,
-        public statusCode: number = 500,
-        public details?: any
-    ) {
+    public readonly statusCode: number;
+    public readonly isOperational: boolean;
+
+    constructor(message: string, statusCode: number, isOperational = true) {
         super(message);
-        this.name = this.constructor.name;
+        this.statusCode = statusCode;
+        this.isOperational = isOperational;
         Error.captureStackTrace(this, this.constructor);
     }
 }
 
-export class BadRequestError extends AppError {
-    constructor(message: string = 'Bad Request', details?: any) {
-        super(message, 400, details);
+export const handleError = (error: any) => {
+    if (error instanceof AppError) {
+        return {
+            statusCode: error.statusCode,
+            body: {
+                status: 'error',
+                message: error.message,
+            },
+        };
     }
-}
 
-export class UnauthorizedError extends AppError {
-    constructor(message: string = 'Unauthorized') {
-        super(message, 41);
+    // Prisma unique constraint error
+    if (error.code === 'P2002') {
+        return {
+            statusCode: 400,
+            body: {
+                status: 'error',
+                message: `Duplicate field: ${error.meta?.target}`,
+            },
+        };
     }
-}
 
-export class ForbiddenError extends AppError {
-    constructor(message: string = 'Forbidden') {
-        super(message, 403);
-    }
-}
-
-export class NotFoundError extends AppError {
-    constructor(message: string = 'Not Found') {
-        super(message, 404);
-    }
-}
-
-export class ValidationError extends AppError {
-    constructor(message: string = 'Validation Error', details?: any) {
-        super(message, 400, details);
-    }
-}
-
-export class ConflictError extends AppError {
-    constructor(message: string = 'Conflict') {
-        super(message, 409);
-    }
-}
+    console.error('Unexpected Error:', error);
+    return {
+        statusCode: 500,
+        body: {
+            status: 'error',
+            message: 'Something went very wrong!',
+        },
+    };
+};

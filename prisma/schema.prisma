@@ -1,0 +1,202 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Rol {
+  ESTUDIANTE
+  CLIENTE
+  ADMIN
+}
+
+enum EstadoPedido {
+  pendiente
+  en_proceso
+  completado
+  cancelado
+}
+
+enum TipoNotificacion {
+  pedido
+  mensaje
+  sistema
+}
+
+model Facultad {
+  id_facultad     Int       @id @default(autoincrement())
+  nombre_facultad String    @unique @db.VarChar(150)
+  carreras        Carrera[]
+
+  @@map("facultades")
+}
+
+model Carrera {
+  id_carrera     Int       @id @default(autoincrement())
+  id_facultad    Int
+  nombre_carrera String    @db.VarChar(150)
+  facultad       Facultad  @relation(fields: [id_facultad], references: [id_facultad], onDelete: Cascade)
+  usuarios       Usuario[]
+
+  @@map("carreras")
+}
+
+model Usuario {
+  id_usuario            Int                 @id @default(autoincrement())
+  email                 String              @unique @db.VarChar(100)
+  contrasena            String              @db.VarChar(255)
+  nombre                String              @db.VarChar(100)
+  apellido              String              @db.VarChar(100)
+  telefono              String?             @db.VarChar(20)
+  id_carrera            Int?
+  rol                   Rol                 @default(CLIENTE)
+  foto_perfil           String?             @db.VarChar(255)
+  calificacion_promedio Decimal?            @default(0.00) @db.Decimal(3, 2)
+  fecha_registro        DateTime?           @default(now()) @db.Timestamp(0)
+  activo                Boolean?            @default(true)
+  carrera               Carrera?            @relation(fields: [id_carrera], references: [id_carrera], onDelete: SetNull)
+  servicios             Servicio[]
+  habilidades           UsuarioHabilidad[]
+  carritos              Carrito[]
+  pedidos               Pedido[]
+  mensajesEnviados      Mensaje[]           @relation("Emisor")
+  mensajesRecibidos     Mensaje[]           @relation("Receptor")
+  notificaciones        Notificacion[]
+  favoritos             Favorito[]
+
+  @@map("usuarios")
+}
+
+model Categoria {
+  id_categoria     Int        @id @default(autoincrement())
+  nombre_categoria String     @unique @db.VarChar(100)
+  descripcion      String?    @db.Text
+  icono            String?    @db.VarChar(50)
+  servicios        Servicio[]
+
+  @@map("categorias")
+}
+
+model Servicio {
+  id_servicio       Int        @id @default(autoincrement())
+  id_usuario        Int
+  id_categoria      Int
+  titulo            String     @db.VarChar(200)
+  descripcion       String     @db.Text
+  precio            Decimal    @db.Decimal(10, 2)
+  tiempo_entrega    String?    @db.VarChar(100)
+  imagen_portada    String?    @db.VarChar(255)
+  fecha_publicacion DateTime?  @default(now()) @db.Timestamp(0)
+  activo            Boolean?   @default(true)
+  usuario           Usuario    @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  categoria         Categoria  @relation(fields: [id_categoria], references: [id_categoria], onDelete: Cascade)
+  carritos          Carrito[]
+  pedidos           Pedido[]
+  resenas           Resena[]
+  favoritos         Favorito[]
+
+  @@fulltext([titulo, descripcion], map: "idx_busqueda")
+  @@map("servicios")
+}
+
+model Habilidad {
+  id_habilidad     Int                @id @default(autoincrement())
+  nombre_habilidad String             @unique @db.VarChar(100)
+  usuarios         UsuarioHabilidad[]
+
+  @@map("habilidades")
+}
+
+model UsuarioHabilidad {
+  id           Int       @id @default(autoincrement())
+  id_usuario   Int
+  id_habilidad Int
+  usuario      Usuario   @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  habilidad    Habilidad @relation(fields: [id_habilidad], references: [id_habilidad], onDelete: Cascade)
+
+  @@unique([id_usuario, id_habilidad])
+  @@map("usuario_habilidades")
+}
+
+model Carrito {
+  id_carrito     Int       @id @default(autoincrement())
+  id_cliente     Int
+  id_servicio    Int
+  horas          Int?      @default(1)
+  fecha_agregado DateTime? @default(now()) @db.Timestamp(0)
+  cliente        Usuario   @relation(fields: [id_cliente], references: [id_usuario], onDelete: Cascade)
+  servicio       Servicio  @relation(fields: [id_servicio], references: [id_servicio], onDelete: Cascade)
+
+  @@map("carritos")
+}
+
+model Pedido {
+  id_pedido     Int          @id @default(autoincrement())
+  id_servicio   Int
+  id_cliente    Int
+  estado        EstadoPedido @default(pendiente)
+  monto_total   Decimal      @db.Decimal(10, 2)
+  fecha_pedido  DateTime?    @default(now()) @db.Timestamp(0)
+  fecha_entrega DateTime?    @db.DateTime(0)
+  notas         String?      @db.Text
+  servicio      Servicio     @relation(fields: [id_servicio], references: [id_servicio], onDelete: NoAction, onUpdate: NoAction)
+  cliente       Usuario      @relation(fields: [id_cliente], references: [id_usuario], onDelete: NoAction, onUpdate: NoAction)
+  resena        Resena?
+
+  @@map("pedidos")
+}
+
+model Resena {
+  id_resena      Int       @id @default(autoincrement())
+  id_pedido      Int       @unique
+  id_servicio    Int
+  calificacion   Int
+  comentario     String?   @db.Text
+  fecha_resena   DateTime? @default(now()) @db.Timestamp(0)
+  pedido         Pedido    @relation(fields: [id_pedido], references: [id_pedido], onDelete: Cascade)
+  servicio       Servicio  @relation(fields: [id_servicio], references: [id_servicio], onDelete: Cascade)
+
+  @@map("resenas")
+}
+
+model Favorito {
+  id_usuario  Int
+  id_servicio Int
+  usuario     Usuario  @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  servicio    Servicio @relation(fields: [id_servicio], references: [id_servicio], onDelete: Cascade)
+
+  @@id([id_usuario, id_servicio])
+  @@map("favoritos")
+}
+
+model Mensaje {
+  id_mensaje  Int      @id @default(autoincrement())
+  id_emisor   Int
+  id_receptor Int
+  contenido   String   @db.Text
+  leido       Int      @default(0) @db.TinyInt
+  fecha_envio DateTime @default(now()) @db.DateTime(3)
+  emisor      Usuario  @relation("Emisor", fields: [id_emisor], references: [id_usuario], onDelete: Cascade)
+  receptor    Usuario  @relation("Receptor", fields: [id_receptor], references: [id_usuario], onDelete: Cascade)
+
+  @@map("mensajes")
+}
+
+model Notificacion {
+  id_notificacion    Int               @id @default(autoincrement())
+  id_usuario         Int
+  titulo             String            @db.VarChar(100)
+  mensaje            String            @db.Text
+  leido              Boolean?          @default(false)
+  tipo               TipoNotificacion? @default(sistema)
+  fecha_notificacion DateTime?         @default(now()) @db.Timestamp(0)
+  usuario            Usuario           @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+
+  @@map("notificaciones")
+}

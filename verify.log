@@ -1,0 +1,14 @@
+--- Starting JWT Verification ---
+
+1. Registering user: test-1770131398718@example.com
+Register Status: 201
+
+2. Logging in...
+Login Status: 200
+Token received: Yes
+
+3. Accessing Protected Route (Update Me)...
+Update Status: 200
+Update Response: {"email":"test-1770131398718@example.com","contrasena":"password123","nombre":"Updated Name","apellido":"User","id_usuario":7,"telefono":"1234567890","id_carrera":1,"rol":"CLIENTE","foto_perfil":null,"calificacion_promedio":0,"fecha_registro":"2026-02-03T15:09:59.000Z","activo":true}
+
+SUCCESS: JWT Authentication is working!

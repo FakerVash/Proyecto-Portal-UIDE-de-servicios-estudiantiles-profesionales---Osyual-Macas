@@ -1,0 +1,36 @@
+{
+  "name": "proyecto",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/swagger": "^9.6.1",
+    "@fastify/swagger-ui": "^5.2.5",
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "@prisma/client": "^6.19.2",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.6.1",
+    "fastify": "^5.7.4",
+    "mysql2": "^3.16.2",
+    "prisma": "^6.19.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^25.2.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

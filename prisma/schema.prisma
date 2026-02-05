@@ -200,3 +200,12 @@ model Notificacion {
 
   @@map("notificaciones")
 }
+
+model AutenticacionMcp {
+  id_autenticacion   Int      @id @default(autoincrement())
+  correo             String   @db.VarChar(100)
+  codigo             String   @db.VarChar(100)
+  fecha_solicitud    DateTime @default(now()) @db.Timestamp(0)
+
+  @@map("autenticacion_mcp")
+}

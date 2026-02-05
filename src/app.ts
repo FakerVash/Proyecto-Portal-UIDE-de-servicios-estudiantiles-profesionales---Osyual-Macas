@@ -17,6 +17,7 @@ import usuarioHabilidadRoutes from './routes/usuario-habilidades.js';
 import mensajeRoutes from './routes/mensajes.js';
 import authRoutes from './routes/auth.js';
 import notificacionRoutes from './routes/notificacion.js';
+import testMcpRoutes from './routes/test-mcp.js';
 
 export default async function buildApp(fastify: FastifyInstance) {
     // Register Schemas
@@ -44,6 +45,7 @@ export default async function buildApp(fastify: FastifyInstance) {
     await fastify.register(mensajeRoutes, { prefix: '/api/mensajes' });
     await fastify.register(authRoutes, { prefix: '/api/auth' });
     await fastify.register(notificacionRoutes, { prefix: '/api/notificaciones' });
+    await fastify.register(testMcpRoutes, { prefix: '/api/test-mcp' });
 
     fastify.get('/health', async () => {
         return { status: 'ok' };

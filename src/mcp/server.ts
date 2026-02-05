@@ -6,25 +6,62 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildRLSFilter } from '../middleware/rls.js';
+import { McpAuthService } from '../services/mcp-auth.service.js';
 
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+const dbUrl = new URL(process.env.DATABASE_URL!);
 const pool = mysql.createPool({
-    uri: process.env.DATABASE_URL!,
+    host: dbUrl.hostname,
+    user: dbUrl.username,
+    password: dbUrl.password,
+    database: dbUrl.pathname.split("/")[1],
+    port: parseInt(dbUrl.port) || 3306,
     waitForConnections: true,
-    connectionLimit: 10
+    connectionLimit: 10,
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
-const currentUser = {
-    id: parseInt(process.env.MCP_USER_ID || "1"),
-    role: process.env.MCP_USER_ROLE || "ESTUDIANTE"
-};
+// Función auxiliar para verificar autenticación
+async function autenticarUsuario(correo: string, codigo: string) {
+    console.error(`🔍 Verificando usuario: ${correo} con código: ${codigo}`);
+
+    // 1. Verificar si el código MCP es válido
+    const esCodigoValido = await mcpAuthService.verificarCodigo(correo, codigo);
+    if (!esCodigoValido) {
+        console.error(`❌ Código inválido para ${correo}`);
+        throw new Error("Código de autenticación inválido o expirado. Solicita uno nuevo.");
+    }
+
+    // 2. Buscar al usuario en la base de datos para obtener su ID y Rol
+    const [rows] = await pool.execute(
+        'SELECT id_usuario, rol FROM usuarios WHERE email = ? AND activo = TRUE',
+        [correo]
+    ) as [any[], any];
+
+    if (rows.length === 0) {
+        console.error(`❌ Elemento usuario no encontrado: ${correo}`);
+        throw new Error("Usuario no encontrado o inactivo.");
+    }
+
+    console.error(`✅ Usuario autenticado: ID ${rows[0].id_usuario}, Rol ${rows[0].rol}`);
+
+    return {
+        id: rows[0].id_usuario,
+        role: rows[0].rol
+    };
+}
 
 const server = new McpServer({
     name: "servicios-estudiantiles-mcp",
     version: "1.0.0"
 });
+
+// Servicio de autenticación MCP
+const mcpAuthService = new McpAuthService(pool);
 
 async function ejecutar(query: string, params: any[] = []) {
     try {
@@ -35,61 +72,166 @@ async function ejecutar(query: string, params: any[] = []) {
     }
 }
 
-// === TOOLS CON RLS ===
 
-server.tool(
-    "obtener_mis_mensajes",
-    "Ver mis conversaciones",
-    { limite: z.number().default(10) },
-    async ({ limite }) => {
-        const f = buildRLSFilter('mensajes', currentUser);
-        return ejecutar(`
-            SELECT m.*, e.nombre as emisor, r.nombre as receptor
-            FROM mensajes m
-            JOIN usuarios e ON m.id_emisor = e.id_usuario
-            JOIN usuarios r ON m.id_receptor = r.id_usuario
-            WHERE ${f.clause} ORDER BY m.fecha_envio DESC LIMIT ?
-        `, [...f.params, limite]);
-    }
-);
 
 server.tool(
     "obtener_mis_pedidos",
-    "Ver mis pedidos",
-    { estado: z.enum(['pendiente', 'en_proceso', 'completado', 'cancelado']).optional() },
-    async ({ estado }) => {
-        const f = buildRLSFilter('pedidos', currentUser);
-        let query = `SELECT p.*, s.titulo as servicio FROM pedidos p 
-                     JOIN servicios s ON p.id_servicio = s.id_servicio WHERE ${f.clause}`;
-        const params = [...f.params];
-        if (estado) { query += " AND p.estado = ?"; params.push(estado); }
-        return ejecutar(query + " ORDER BY p.fecha_pedido DESC", params);
+    "Ver mis pedidos (Requiere autenticación)",
+    {
+        correo: z.string().email(),
+        codigo: z.string().describe("Código recibido por correo"),
+        estado: z.enum(['pendiente', 'en_proceso', 'completado', 'cancelado']).optional()
+    },
+    async ({ correo, codigo, estado }) => {
+        try {
+            const currentUser = await autenticarUsuario(correo, codigo);
+            const f = buildRLSFilter('pedidos', currentUser);
+
+            let query = `SELECT p.*, s.titulo as servicio FROM pedidos p 
+                         JOIN servicios s ON p.id_servicio = s.id_servicio WHERE ${f.clause}`;
+            const params = [...f.params];
+
+            if (estado) { query += " AND p.estado = ?"; params.push(estado); }
+
+            return ejecutar(query + " ORDER BY p.fecha_pedido DESC", params);
+        } catch (error: any) {
+            return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
     }
 );
 
 server.tool(
     "obtener_mis_notificaciones",
-    "Ver mis alertas",
-    { solo_no_leidas: z.boolean().default(false) },
-    async ({ solo_no_leidas }) => {
-        const f = buildRLSFilter('notificaciones', currentUser);
-        let query = `SELECT * FROM notificaciones WHERE ${f.clause}`;
-        if (solo_no_leidas) query += " AND leido = FALSE";
-        return ejecutar(query + " ORDER BY fecha_notificacion DESC", f.params);
+    "Ver mis alertas (Requiere autenticación)",
+    {
+        correo: z.string().email(),
+        codigo: z.string().describe("Código recibido por correo"),
+        solo_no_leidas: z.boolean().default(false)
+    },
+    async ({ correo, codigo, solo_no_leidas }) => {
+        try {
+            const currentUser = await autenticarUsuario(correo, codigo);
+            const f = buildRLSFilter('notificaciones', currentUser);
+
+            let query = `SELECT * FROM notificaciones WHERE ${f.clause}`;
+            if (solo_no_leidas) query += " AND leido = FALSE";
+
+            return ejecutar(query + " ORDER BY fecha_notificacion DESC", f.params);
+        } catch (error: any) {
+            return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
     }
 );
 
 server.tool(
     "obtener_mi_carrito",
-    "Ver mi carrito",
-    {},
-    async () => {
-        const f = buildRLSFilter('carritos', currentUser);
-        return ejecutar(`
-            SELECT c.*, s.titulo, s.precio, (c.horas * s.precio) as subtotal
-            FROM carritos c JOIN servicios s ON c.id_servicio = s.id_servicio
-            WHERE ${f.clause}
-        `, f.params);
+    "Ver mi carrito (Requiere autenticación)",
+    {
+        correo: z.string().email(),
+        codigo: z.string().describe("Código recibido por correo")
+    },
+    async ({ correo, codigo }) => {
+        try {
+            const currentUser = await autenticarUsuario(correo, codigo);
+            const f = buildRLSFilter('carritos', currentUser);
+
+            return ejecutar(`
+                SELECT c.*, s.titulo, s.precio, (c.horas * s.precio) as subtotal
+                FROM carritos c JOIN servicios s ON c.id_servicio = s.id_servicio
+                WHERE ${f.clause}
+            `, f.params);
+        } catch (error: any) {
+            return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
+    }
+);
+
+
+server.tool(
+    "obtener_mi_perfil",
+    "Ver mi perfil completo (Requiere autenticación)",
+    {
+        correo: z.string().email(),
+        codigo: z.string().describe("Código recibido por correo")
+    },
+    async ({ correo, codigo }) => {
+        try {
+            const currentUser = await autenticarUsuario(correo, codigo);
+
+            const [rows] = await pool.execute(`
+                SELECT u.id_usuario, u.email, u.nombre, u.apellido, u.telefono, u.rol, 
+                       u.foto_perfil, u.calificacion_promedio, u.fecha_registro, u.activo,
+                       c.nombre_carrera
+                FROM usuarios u 
+                LEFT JOIN carreras c ON u.id_carrera = c.id_carrera
+                WHERE u.id_usuario = ?
+            `, [currentUser.id]) as [any[], any];
+
+            if (rows.length === 0) {
+                return { isError: true, content: [{ type: "text", text: "Error al recuperar perfil." }] };
+            }
+
+            const u = rows[0];
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        exito: true,
+                        perfil: {
+                            id: u.id_usuario,
+                            nombre_completo: `${u.nombre} ${u.apellido}`,
+                            email: u.email,
+                            telefono: u.telefono || "No registrado",
+                            rol: u.rol,
+                            carrera: u.nombre_carrera || "No asignada",
+                            calificacion: u.calificacion_promedio,
+                            fecha_registro: u.fecha_registro,
+                            estado: u.activo ? "Activo" : "Inactivo"
+                        }
+                    }, null, 2)
+                }]
+            };
+        } catch (error: any) {
+            return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
+    }
+);
+
+server.tool(
+    "obtener_mis_servicios",
+    "Ver servicios que yo he publicado (Requiere autenticación)",
+    {
+        correo: z.string().email(),
+        codigo: z.string().describe("Código recibido por correo")
+    },
+    async ({ correo, codigo }) => {
+        try {
+            const currentUser = await autenticarUsuario(correo, codigo);
+
+            const [rows] = await pool.execute(`
+                SELECT s.id_servicio, s.titulo, s.descripcion, s.precio, s.tiempo_entrega, 
+                       s.fecha_publicacion, s.activo, cat.nombre_categoria,
+                       (SELECT COUNT(*) FROM pedidos p WHERE p.id_servicio = s.id_servicio) as total_pedidos,
+                       (SELECT AVG(calificacion) FROM resenas r WHERE r.id_servicio = s.id_servicio) as calificacion_promedio
+                FROM servicios s
+                JOIN categorias cat ON s.id_categoria = cat.id_categoria
+                WHERE s.id_usuario = ?
+                ORDER BY s.fecha_publicacion DESC
+            `, [currentUser.id]) as [any[], any];
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        exito: true,
+                        total_servicios: rows.length,
+                        servicios: rows
+                    }, null, 2)
+                }]
+            };
+        } catch (error: any) {
+            return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
     }
 );
 
@@ -167,10 +309,190 @@ server.tool(
     }
 );
 
+
+server.tool(
+    "buscar_usuarios",
+    "Buscar lista de usuarios públicos",
+    {
+        termino: z.string().optional(),
+        rol: z.enum(['ESTUDIANTE', 'ADMIN', 'CLIENTE']).optional()
+    },
+    async ({ termino, rol }) => {
+        let query = `
+            SELECT u.id_usuario, u.nombre, u.apellido, u.rol, u.foto_perfil, 
+                   u.calificacion_promedio, c.nombre_carrera
+            FROM usuarios u 
+            LEFT JOIN carreras c ON u.id_carrera = c.id_carrera
+            WHERE u.activo = TRUE
+        `;
+        const params: any[] = [];
+
+        if (termino) {
+            query += " AND (u.nombre LIKE ? OR u.apellido LIKE ?)";
+            params.push(`%${termino}%`, `%${termino}%`);
+        }
+        if (rol) {
+            query += " AND u.rol = ?";
+            params.push(rol);
+        }
+
+        return ejecutar(query + " ORDER BY u.nombre ASC LIMIT 50", params);
+    }
+);
+
+server.tool(
+    "explorar_categorias",
+    "Ver todas las categorías de servicios disponibles",
+    {},
+    async () => {
+        return ejecutar("SELECT * FROM categorias ORDER BY nombre_categoria ASC");
+    }
+);
+
+server.tool(
+    "ver_resenas_servicio",
+    "Ver opiniones de un servicio específico",
+    { id_servicio: z.number() },
+    async ({ id_servicio }) => {
+        return ejecutar(`
+            SELECT r.calificacion, r.comentario, r.fecha_resena, u.nombre as autor
+            FROM resenas r
+            JOIN pedidos p ON r.id_pedido = p.id_pedido
+            JOIN usuarios u ON p.id_cliente = u.id_usuario
+            WHERE r.id_servicio = ?
+            ORDER BY r.fecha_resena DESC
+        `, [id_servicio]);
+    }
+);
+
+server.tool(
+    "top_servicios_valorados",
+    "Ver los servicios mejor calificados",
+    { limit: z.number().default(5).optional() },
+    async ({ limit }) => {
+        return ejecutar(`
+            SELECT s.id_servicio, s.titulo, s.precio, s.imagen_portada, 
+                   cat.nombre_categoria, u.nombre as prestador,
+                   (SELECT AVG(calificacion) FROM resenas r WHERE r.id_servicio = s.id_servicio) as promedio_calificacion
+            FROM servicios s
+            JOIN categorias cat ON s.id_categoria = cat.id_categoria
+            JOIN usuarios u ON s.id_usuario = u.id_usuario
+            WHERE s.activo = TRUE
+            ORDER BY promedio_calificacion DESC
+            LIMIT ?
+        `, [limit || 5]);
+    }
+);
+
+// === HERRAMIENTA DE AUTENTICACIÓN MCP ===
+
+server.tool(
+    "solicitar_codigo_auth",
+    "Solicitar un código de autenticación a mi correo",
+    {
+        correo: z.string().email("Debe ser un correo válido")
+    },
+    async ({ correo }) => {
+        try {
+            // Generar código aleatorio seguro
+            const codigo = 'MCP-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+
+            const id = await mcpAuthService.guardarCodigoAutenticacion(correo, codigo);
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        exito: true,
+                        mensaje: `Código enviado a ${correo}. Por favor verifícalo.`,
+                        instruccion: "Pide al usuario que revise su correo e ingrese el código."
+                    }, null, 2)
+                }]
+            };
+        } catch (error: any) {
+            return {
+                isError: true,
+                content: [{
+                    type: "text" as const,
+                    text: `Error al solicitar código: ${error.message}`
+                }]
+            };
+        }
+    }
+);
+
+
+server.tool(
+    "verificar_codigo_mcp",
+    "Verificar si un código de autenticación MCP es válido",
+    {
+        correo: z.string().email("Debe ser un correo válido"),
+        codigo: z.string().min(1, "El código no puede estar vacío")
+    },
+    async ({ correo, codigo }) => {
+        try {
+            const esValido = await mcpAuthService.verificarCodigo(correo, codigo);
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        valido: esValido,
+                        correo: correo,
+                        mensaje: esValido
+                            ? "Código válido"
+                            : "Código inválido o no encontrado"
+                    }, null, 2)
+                }]
+            };
+        } catch (error: any) {
+            return {
+                isError: true,
+                content: [{
+                    type: "text" as const,
+                    text: `Error al verificar código: ${error.message}`
+                }]
+            };
+        }
+    }
+);
+
+server.tool(
+    "historial_autenticacion_mcp",
+    "Ver historial de autenticaciones MCP de un correo",
+    {
+        correo: z.string().email("Debe ser un correo válido")
+    },
+    async ({ correo }) => {
+        try {
+            const historial = await mcpAuthService.obtenerHistorial(correo);
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        correo: correo,
+                        total: historial.length,
+                        autenticaciones: historial
+                    }, null, 2)
+                }]
+            };
+        } catch (error: any) {
+            return {
+                isError: true,
+                content: [{
+                    type: "text" as const,
+                    text: `Error al obtener historial: ${error.message}`
+                }]
+            };
+        }
+    }
+);
+
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error(`MCP iniciado - Usuario ID: ${currentUser.id}`);
+    console.error(`MCP iniciado - Esperando solicitudes de autenticación...`);
 }
 
 main().catch(console.error);
